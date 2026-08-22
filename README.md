@@ -22,7 +22,7 @@ PDF2MD 通过三步流水线系统性解决上述问题：先在 PDF 源层面�
 
 ### 核心特性
 
-- **水印去除**：使用 `pikepdf` 在 PDF 内部结构中扫描并移除使用 `AAAAAB+Helvetica-Bold` 字体的水印 Form XObject。水印字体名称可配置。
+- **水印去除**：使用 `pikepdf` 在 PDF 内部结构中扫描并移除水印，支持两种形态——嵌入 XObject 的水印（Form XObject，通过 `Do` 命令绘制）和直接绘制在页面内容流中的文本水印（使用独立嵌入子集字体，如 `AAAAAA+FontName-0`）。字体特征均可配置。
 - **页眉页脚过滤**：基于频率分析——跨页重复出现在页面顶部/底部的文本块被自动识别并过滤。
 - **表格保留**：三路表格检测策略：
     - pdfplumber（主力）处理无边框表格（ARM 指令编码表、Intel 寄存器表）
@@ -74,9 +74,17 @@ python convert_hybrid.py    # 第二步+第三步：过滤 + 转换
 
 | 步骤 | 脚本 | 引擎 | 作用 |
 |------|------|------|------|
-| 1 | `remove_watermark.py` | pikepdf | 从 PDF 源码层面移除水印 XObject |
+| 1 | `remove_watermark.py` | pikepdf | 从 PDF 源码层面移除水印（XObject 型 + 内容流文本型） |
 | 2 | 内置 | 频率分析 | 检测并过滤跨页重复的页眉/页脚/水印文本 |
 | 3 | `convert_hybrid.py` | pdfplumber + PyMuPDF + 启发式 | 提取文字、表格、图片，组装 Markdown |
+
+### 水印形态说明
+
+PDF 水印可能以两种内部形态存在：
+- **XObject 型**：水印打包为 Form XObject，页面内容流通过 `q ... cm /Name Do Q` 命令绘制。递归扫描 XObject 树找水印字体，追溯引用链路后从内容流移除对应 `Do` 命令。
+- **内容流文本型**：水印文本直接用特征字体写入页面内容流（常带旋转矩阵斜向平铺）。统计页面字体资源找出独立于正文的嵌入子集字体，定位包含其全部文本块的 `q ... Q` 段并整段移除。
+
+两种形态检测失败时文件原样复制，不会损坏内容。
 
 ### 表格检测详解
 
@@ -104,7 +112,7 @@ PyMuPDF 以浮点数报告块坐标，同行块可能相差不足 0.001pt。PDF2
 ### 局限性
 
 - **加密 PDF**：无法处理水印去除（原样复制），后续转换不受影响
-- **字符级水印**：水印与正文在 PDF 渲染层面字符级交织的场景（如贯穿全文的斜向层叠文本），可能有残留乱码
+- **扫描件水印**：水印以纯图像层存在（无文本层的扫描件），无法通过结构分析移除
 - **跨页表格**：跨越页面边界的寄存器表，续页上会重复表头行
 - **矢量图**：方框图、流水线图等矢量图形不会被提取为图片
 - **扫描件 PDF**：不支持（需要 OCR）
@@ -129,7 +137,7 @@ PDF2MD addresses all three through a three-step pipeline: watermark removal → 
 
 ### Features
 
-- **Watermark removal**: Strips `AAAAAB+Helvetica-Bold` font watermarks at the PDF source level using `pikepdf`. Customizable font name.
+- **Watermark removal**: Strips watermarks at the PDF source level using `pikepdf`. Two forms are supported — XObject-embedded watermarks (Form XObjects drawn via `Do` commands) and content-stream text watermarks (text drawn directly in the page stream with a distinctive embedded subset font, e.g. `AAAAAA+FontName-0`). Font signatures are customizable.
 - **Header/footer filtering**: Frequency-based analysis detects repeated page headers/footers and filters them before text extraction.
 - **Table preservation**: Dual-strategy table detection:
     - *pdfplumber* for borderless tables (ARM TRM instruction encodings, Intel register tables)
@@ -181,9 +189,17 @@ python convert_hybrid.py    # Steps 2-3: Filtering + conversion
 
 | Step | Script | Engine | Purpose |
 |------|--------|--------|---------|
-| 1 | `remove_watermark.py` | pikepdf | Remove Form XObject watermarks from PDF source |
+| 1 | `remove_watermark.py` | pikepdf | Remove watermarks from PDF source (XObject-based + content-stream text) |
 | 2 | built-in | frequency analysis | Detect and filter repeated headers/footers/watermarks |
 | 3 | `convert_hybrid.py` | pdfplumber + PyMuPDF + heuristics | Extract text, tables, and images; assemble Markdown |
+
+### Watermark Forms in Detail
+
+PDF watermarks appear in two internal forms:
+- **XObject-embedded**: The watermark is packaged as a Form XObject drawn via `q ... cm /Name Do Q`. The tool recursively scans the XObject tree for the watermark font, traces the reference chain, and removes the corresponding `Do` commands from the content stream.
+- **Content-stream text**: Watermark text is written directly into the page content stream (often with a rotation matrix for diagonal tiling). The tool finds the embedded subset font distinct from body fonts in page font resources, locates the `q ... Q` section covering all of its text blocks, and removes the section wholesale.
+
+If neither form matches, the file is copied as-is — no damage to the content.
 
 ### Table Detection in Detail
 
@@ -211,7 +227,7 @@ Multi-column layouts are detected by finding ≥100pt x-gaps between body text b
 ### Limitations
 
 - **Encrypted PDFs**: Cannot be processed for watermark removal (copied as-is)
-- **Character-level watermark**: PDFs with watermarks interleaved at the character rendering level (e.g., diagonal overlay text) may have residual garbled output
+- **Scanned image watermarks**: Watermarks living purely in the image layer (scans without a text layer) cannot be removed via structural analysis
 - **Page-spanning tables**: Register tables that cross page boundaries may have header rows repeated on continuation pages
 - **Vector graphics**: Block diagrams, pipeline diagrams, and other vector art are not extracted as images
 - **Scanned PDFs**: Not supported (requires OCR)

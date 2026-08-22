@@ -1,6 +1,6 @@
 ---
 name: pdf2md
-description: Convert PDF files to Markdown with watermark removal, header/footer filtering, table preservation, and image extraction. Use when converting PDF documents (especially technical specs, datasheets, reference manuals) to clean Markdown format.
+description: Convert PDF files to Markdown with watermark removal (XObject-embedded and content-stream text watermarks), header/footer filtering, table preservation, and image extraction. Use when converting PDF documents (especially technical specs, datasheets, reference manuals) to clean Markdown format.
 ---
 
 # PDF2MD — PDF to Markdown Converter
@@ -9,7 +9,7 @@ description: Convert PDF files to Markdown with watermark removal, header/footer
 
 Three-step pipeline that converts PDF documents to clean Markdown:
 
-1. **Watermark Removal** — `remove_watermark.py` strips watermark XObjects from PDF internals using pikepdf
+1. **Watermark Removal** — `remove_watermark.py` strips both XObject-embedded and content-stream text watermarks from PDF internals using pikepdf
 2. **Header/Footer Filtering** — frequency-based detection removes repeated headers/footers (built into `convert_hybrid.py`)
 3. **Hybrid Conversion** — pdfplumber (tables) + PyMuPDF (images + text) + heuristics → Markdown
 
@@ -35,7 +35,7 @@ python remove_watermark.py && python convert_hybrid.py
 
 | Component | Technology | Role |
 |-----------|-----------|------|
-| Watermark removal | pikepdf | Removes Form XObject watermarks (AAAAAB+Helvetica-Bold font) |
+| Watermark removal | pikepdf | Removes XObject watermarks (AAAAAB+Helvetica-Bold) and content-stream text watermarks (AAAA-prefixed subset fonts) |
 | Header/footer filter | frequency analysis | Detects repeated top/bottom text across pages |
 | Table extraction | pdfplumber (primary) + PyMuPDF (fallback) | Both bordered and borderless tables |
 | Image extraction | PyMuPDF (fitz) | Extracts embedded images to `*_images/` directory |
@@ -66,12 +66,19 @@ Columns are separated by `\s{2,}` across multiple text blocks. Requires ≥3 mat
 
 ## Watermark Removal
 
-Uses `pikepdf` to operate on PDF internals:
+Uses `pikepdf` to operate on PDF internals. Two watermark forms are detected:
+
+**XObject-embedded** (watermark is a Form XObject drawn via `Do` command):
 - Recursively scan Form XObjects for watermark font (`AAAAAB+Helvetica-Bold`)
 - Trace XObject reference chains to find page-level root XObjects
 - Regex-remove Do commands from page content streams
 
-The watermark font name can be customized by editing the `WATERMARK_FONT` variable.
+**Content-stream text** (watermark text drawn directly in the page stream with a distinctive embedded subset font, e.g. `AAAAAA+FontName-0`):
+- Detect the watermark font (`WATERMARK_SUBSET_PREFIX` constant) in page-level font resources
+- Locate the outermost `q ... Q` section covering all watermark `Tf` call sites
+- Remove the whole section; fallback removes individual `BT ... ET` blocks if no `q ... Q` wrapper exists
+
+The XObject watermark font name can be customized by editing the `WATERMARK_FONT` variable; the text watermark prefix via `WATERMARK_SUBSET_PREFIX`. A file that matches neither pattern is copied as-is.
 
 ## Text Ordering
 
@@ -86,6 +93,6 @@ pip install pikepdf PyMuPDF pdfplumber
 ## Limitations
 
 - Encrypted PDFs cannot be processed for watermark removal (copied as-is)
-- PDFs with character-level watermark interleaving may have residual garbled text
+- Scanned image-layer watermarks (raster overlay) are not removed
 - Page-spanning tables may have header row repeated on continuation pages
 - Vector graphics (block diagrams) are not extracted as images
